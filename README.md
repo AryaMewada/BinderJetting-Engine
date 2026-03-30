@@ -4,3 +4,4 @@ BinderJetting Engine (OBJE), is a engine responsile to produce Raster based Imag
 NOTE - Under Development
 
 30-3-26 - Add multiple Objects for rasterization v0.02, Next - Intelligent Packing System
+30-3-26 v2- Intelligent Packing System

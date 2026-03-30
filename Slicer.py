@@ -6,6 +6,8 @@ from PIL import Image
 import json
 import cv2
 
+
+
 # =========================================================
 # PART CLASS
 # =========================================================
@@ -27,6 +29,8 @@ class Part:
 
         self.position = np.array([0.0, 0.0, 0.0])
 
+      
+
     def move_to_origin(self):
         # only move in X and Y, NOT Z
         translation = [-self.min_bound[0], -self.min_bound[1], 0]
@@ -35,34 +39,192 @@ class Part:
     def apply_position(self):
         self.mesh.apply_translation(self.position)
 
+
+    # ROTATION FUNCTION
+    def rotate_z(self, angle_deg):
+        angle_rad = np.radians(angle_deg)
+
+        rot_matrix = trimesh.transformations.rotation_matrix(
+            angle_rad, [0, 0, 1]
+        )
+
+        self.mesh.apply_transform(rot_matrix)
+
+        # recompute bounds after rotation
+        self.min_bound = self.mesh.bounds[0]
+        self.max_bound = self.mesh.bounds[1]
+        self.size = self.max_bound - self.min_bound
+
+
+
 # =========================================================
-# AUTO PLACEMENT (GRID)
+# COLLISION CHECK (GLOBAL)
 # =========================================================
-def place_parts(parts, bed_size, spacing=5.0):
+# def is_collision_poly(part, placed_parts, spacing):
 
-    x_cursor = 0
-    y_cursor = 0
-    row_height = 0
+#     for p in placed_parts:
 
-    for part in parts:
+#         moved = translate(
+#             part.footprint,
+#             xoff=part.position[0],
+#             yoff=part.position[1]
+#         )
 
-        part.move_to_origin()
+#         existing = translate(
+#             p.footprint,
+#             xoff=p.position[0],
+#             yoff=p.position[1]
+#         )
 
-        size_x, size_y = part.size[0], part.size[1]
+#         if moved.buffer(spacing).intersects(existing):
+#             return True
 
-        if x_cursor + size_x > bed_size[0]:
-            x_cursor = 0
-            y_cursor += row_height + spacing
-            row_height = 0
+#     return False
 
-        if y_cursor + size_y > bed_size[1]:
-            raise ValueError("Parts do not fit on bed")
 
-        part.position = np.array([x_cursor, y_cursor, 0])
-        part.apply_position()
+# =========================================================
+# AUTO NESTING (GLOBAL)
+# =========================================================
+def auto_nest(parts, bed_size, spacing=5):
 
-        x_cursor += size_x + spacing
-        row_height = max(row_height, size_y)
+    EDGE_MARGIN = max(spacing, 10)   # safe margin from edges
+
+    # SORT BIG → SMALL
+    parts_sorted = sorted(parts, key=lambda p: p.size[0]*p.size[1], reverse=True)
+
+    placed_parts = []
+
+    # START WITH MARGIN (IMPORTANT)
+    x_cursor = EDGE_MARGIN
+    y_cursor = EDGE_MARGIN
+    current_row_height = 0
+
+    for part in parts_sorted:
+
+        best_part = None
+
+        # TRY ROTATIONS
+        for angle in [0, 90]:
+
+            test_part = Part(part.filepath)
+
+            if angle != 0:
+                test_part.rotate_z(angle)
+
+            test_part.move_to_origin()
+
+            size_x, size_y = test_part.size[0], test_part.size[1]
+
+            # CHECK IF FITS IN CURRENT ROW (WITH EDGE MARGIN)
+            if x_cursor + size_x > bed_size[0] - EDGE_MARGIN:
+                continue
+
+            best_part = test_part
+            break
+
+        # IF DOESN’T FIT → NEW ROW
+        if best_part is None:
+            x_cursor = EDGE_MARGIN
+            y_cursor += current_row_height + spacing
+            current_row_height = 0
+
+            # retry placement in new row
+            for angle in [0, 90]:
+
+                test_part = Part(part.filepath)
+
+                if angle != 0:
+                    test_part.rotate_z(angle)
+
+                test_part.move_to_origin()
+
+                size_x, size_y = test_part.size[0], test_part.size[1]
+
+                if x_cursor + size_x <= bed_size[0] - EDGE_MARGIN:
+                    best_part = test_part
+                    break
+
+        if best_part is None:
+            raise ValueError(f"Cannot place part: {part.filepath}")
+
+        # PLACE PART
+        best_part.position = np.array([x_cursor, y_cursor, 0])
+        best_part.apply_position()
+
+        placed_parts.append(best_part)
+
+        # UPDATE CURSORS
+        x_cursor += best_part.size[0] + spacing
+        current_row_height = max(current_row_height, best_part.size[1])
+
+        # CHECK BED HEIGHT (WITH MARGIN)
+        if y_cursor + current_row_height > bed_size[1] - EDGE_MARGIN:
+            raise ValueError("Parts exceed bed height")
+
+    return placed_parts, parts_sorted
+
+# =========================================================
+# Gapfilling
+# =========================================================
+
+def fill_gaps(placed_parts, remaining_parts, bed_size, spacing=5):
+
+    EDGE_MARGIN = max(spacing, 10)
+
+    for part in remaining_parts:
+
+        placed = False
+
+        for angle in [0, 90]:
+
+            test_part = Part(part.filepath)
+
+            if angle != 0:
+                test_part.rotate_z(angle)
+
+            test_part.move_to_origin()
+
+            size_x, size_y = test_part.size[0], test_part.size[1]
+
+            # scan entire bed
+            for y in range(EDGE_MARGIN, int(bed_size[1] - EDGE_MARGIN), spacing):
+                for x in range(EDGE_MARGIN, int(bed_size[0] - EDGE_MARGIN), spacing):
+
+                    test_part.position = np.array([x, y, 0])
+
+                    # boundary check
+                    if (
+                        x + size_x > bed_size[0] - EDGE_MARGIN or
+                        y + size_y > bed_size[1] - EDGE_MARGIN
+                    ):
+                        continue
+
+                    # collision check
+                    collision = False
+
+                    for p in placed_parts:
+                        if (
+                            test_part.position[0] < p.position[0] + p.size[0] + spacing and
+                            test_part.position[0] + size_x + spacing > p.position[0] and
+                            test_part.position[1] < p.position[1] + p.size[1] + spacing and
+                            test_part.position[1] + size_y + spacing > p.position[1]
+                        ):
+                            collision = True
+                            break
+
+                    if not collision:
+                        test_part.apply_position()
+                        placed_parts.append(test_part)
+                        placed = True
+                        break
+
+                if placed:
+                    break
+
+            if placed:
+                break
+
+    return placed_parts
 
 
 # =========================================================
@@ -100,6 +262,23 @@ file_list = [
     "scraper.stl",
     "pcb.stl",
     "pcb2.stl",
+    "Head.stl",
+    "PCB CMPT 1.stl",
+    "Body1.stl",
+    "handle.stl",
+    "scraper.stl",
+    "pcb.stl",
+    "pcb2.stl",
+    "Head.stl",
+    "PCB CMPT 1.stl",
+    "Body1.stl",
+    "handle.stl",
+    "scraper.stl",
+    "pcb.stl",
+    "pcb2.stl",
+    "Head.stl",
+    "PCB CMPT 1.stl",
+    "Body1.stl",
 ]
 
 parts = []
@@ -110,7 +289,12 @@ for f in file_list:
     print("  Watertight:", part.mesh.is_watertight)
     parts.append(part)
 
-place_parts(parts, BED_SIZE_MM)
+placed_parts, all_parts = auto_nest(parts, BED_SIZE_MM)
+
+# remaining = parts not placed initially
+remaining_parts = [p for p in all_parts if p.filepath not in [pp.filepath for pp in placed_parts]]
+
+parts = fill_gaps(placed_parts, remaining_parts, BED_SIZE_MM)
 
 # =========================================================
 # COMBINE MESHES
@@ -151,9 +335,12 @@ z = z_min + (LAYER_HEIGHT / 2)
 
 layer_num = 0
 
+
+
 # =========================================================
 # SLICING LOOP (FIXED STRUCTURE)
 # =========================================================
+total_black_pixels = 0
 while z <= z_max:
 
     print(f"Processing layer {layer_num} at Z={z:.3f}")
@@ -179,6 +366,8 @@ while z <= z_max:
     # CREATE MASK (IMPORTANT)
     # =====================================================
     mask = np.full((IMG_HEIGHT, IMG_WIDTH), 255, dtype=np.uint8)
+
+    
 
     # =====================================================
     # DRAW GEOMETRY (FIXED)
