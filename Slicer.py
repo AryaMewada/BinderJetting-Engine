@@ -6,6 +6,7 @@ from PIL import Image
 import json
 import cv2
 
+from datetime import datetime
 
 
 # =========================================================
@@ -323,6 +324,13 @@ def run_slicer(file_list, progress_callback=None, settings=None):
 
     DPI = settings.get("dpi", 300)
     LAYER_HEIGHT = settings.get("layer_height", 0.2)
+    # =========================
+    # BINDER SETTINGS FROM UI
+    # =========================
+    SHELL_PX = settings.get("shell_thickness", 2) * 3
+    CORE_RATIO = settings.get("core_density", 0.6)
+    GAMMA = settings.get("gamma", 2.5)
+    
 
     PIXEL_SIZE = 25.4 / DPI
 
@@ -332,14 +340,11 @@ def run_slicer(file_list, progress_callback=None, settings=None):
 
     PADDING_PX = int(PADDING_MM / PIXEL_SIZE)
 
-    MAX_DIST_MM = 0.4
-    SHELL_THICKNESS_MM = 1.5
-    CORE_BINDER_RATIO = 0.6
-    GAMMA = 2.5
+   
    
 
 
-    JOB_DIR = "job_001"
+    JOB_DIR = f"job_{datetime.now().strftime('%H%M%S')}"
     TIFF_DIR = os.path.join(JOB_DIR, "tiff")
 
     os.makedirs(TIFF_DIR, exist_ok=True)
@@ -446,14 +451,42 @@ def run_slicer(file_list, progress_callback=None, settings=None):
                 cv2.fillPoly(mask, [pts_np], 0)
 
         # =========================
-        # BINDER CALCULATION
+        # BINDER CALCULATION (NEW)
         # =========================
-        total_black_pixels += np.sum(mask == 0)
+
+        binary = (mask == 0).astype(np.uint8)
+
+        # IMPORTANT: distance expects 0 background, 1 object
+        dist = cv2.distanceTransform(binary, cv2.DIST_L2, 5)
+
+        # shell thickness directly in pixels
+        shell_mask = (dist > 0) & (dist <= SHELL_PX)
+        core_mask = dist > SHELL_PX
+
+        output = np.full_like(mask, 255, dtype=np.uint8)
+
+        # shell = full binder
+        output[shell_mask] = 0
+
+        # core = partial binder
+        output[core_mask] = int(255 * (1 - CORE_RATIO))
+
+        # apply gamma
+
+        output = output.astype(np.uint8)
+
+        print("Shell:", np.sum(shell_mask))
+        print("Core:", np.sum(core_mask))
+
+        # =========================
+        # COUNT PIXELS
+        # =========================
+        total_black_pixels += np.sum(output) / 255
 
         # =========================
         # SAVE IMAGE
         # =========================
-        img = Image.fromarray(mask)
+        img = Image.fromarray(output)
         filename = os.path.join(TIFF_DIR, f"layer_{layer_num:04d}.tiff")
         img.save(filename)
 
@@ -462,7 +495,8 @@ def run_slicer(file_list, progress_callback=None, settings=None):
         # =========================
         if progress_callback:
             progress = int((layer_num / total_layers_est) * 100)
-            progress_callback(progress, mask)
+            preview = output
+            progress_callback(progress, preview)
 
         # =========================
         # NEXT LAYER

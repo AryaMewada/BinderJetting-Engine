@@ -2,6 +2,10 @@ import sys
 import json
 import os
 from Slicer import run_slicer
+import shutil
+import os
+import json
+from datetime import datetime
 
 from PyQt5.QtWidgets import (
     QApplication, QWidget, QPushButton, QVBoxLayout,
@@ -84,6 +88,10 @@ class SlicerApp(QWidget):
         self.btn_load.clicked.connect(self.load_project)
         btn_layout.addWidget(self.btn_load)
 
+        self.btn_export = QPushButton("Export Job")
+        self.btn_export.clicked.connect(self.export_job)
+        btn_layout.addWidget(self.btn_export)
+
         self.layout.addLayout(btn_layout)
 
         # =========================
@@ -121,6 +129,28 @@ class SlicerApp(QWidget):
         self.layout.addLayout(form)
 
         # =========================
+        # BINDER SETTINGS
+        # =========================
+
+        # Shell Thickness
+        self.shell_thickness = QSpinBox()
+        self.shell_thickness.setRange(1, 10)
+        self.shell_thickness.setValue(2)
+        form.addRow("Shell Thickness (px)", self.shell_thickness)
+
+        # Core Density
+        self.core_density = QSpinBox()
+        self.core_density.setRange(10, 100)
+        self.core_density.setValue(60)
+        form.addRow("Core Density (%)", self.core_density)
+
+        # Gamma
+        self.gamma = QSpinBox()
+        self.gamma.setRange(1, 50)
+        self.gamma.setValue(25)  # = 2.5
+        form.addRow("Gamma (x0.1)", self.gamma)
+
+        # =========================
         # GENERATE
         # =========================
         self.btn_generate = QPushButton("Generate")
@@ -136,7 +166,7 @@ class SlicerApp(QWidget):
         # LIVE PREVIEW
         # =========================
         self.preview_label = QLabel()
-        self.preview_label.setMinimumHeight(250)
+        self.preview_label.setMinimumHeight(300)
         self.preview_label.setStyleSheet("background-color: black;")
         self.layout.addWidget(self.preview_label)
 
@@ -173,7 +203,7 @@ class SlicerApp(QWidget):
         for f in files:
             if f not in self.files:
                 self.files.append(f)
-                self.file_list.addItem(f)
+                self.file_list.addItem(os.path.basename(f))
 
     # =========================
     # NEW PROJECT
@@ -215,7 +245,12 @@ class SlicerApp(QWidget):
                 "bed_x": self.bed_x.value(),
                 "bed_y": self.bed_y.value(),
                 "layer_height": self.layer_height.value() / 10.0,
-                "dpi": self.dpi.value()
+                "dpi": self.dpi.value(),
+
+                # NEW
+                "shell_thickness": self.shell_thickness.value(),
+                "core_density": self.core_density.value(),
+                "gamma": self.gamma.value()
             }
         }
 
@@ -246,12 +281,10 @@ class SlicerApp(QWidget):
 
         # load files
         for fpath in data.get("files", []):
-            self.files.append(fpath)
-            self.file_list.addItem(fpath)
 
             if os.path.exists(fpath):
                 self.files.append(fpath)
-                self.file_list.addItem(fpath)
+                self.file_list.addItem(os.path.basename(fpath))
             else:
                 print("Missing file:", fpath)
 
@@ -262,8 +295,75 @@ class SlicerApp(QWidget):
         self.bed_y.setValue(settings.get("bed_y", 500))
         self.layer_height.setValue(int(settings.get("layer_height", 0.2) * 10))
         self.dpi.setValue(settings.get("dpi", 300))
+        self.shell_thickness.setValue(settings.get("shell_thickness", 2))
+        self.core_density.setValue(settings.get("core_density", 60))
+        self.gamma.setValue(settings.get("gamma", 25))
 
         QMessageBox.information(self, "Loaded", "Project loaded successfully")
+
+    # =========================
+    # Export
+    # =========================       
+
+    def export_job(self):
+
+        if not hasattr(self, "last_result"):
+            QMessageBox.warning(self, "Warning", "No job to export")
+            return
+
+        folder = QFileDialog.getExistingDirectory(self, "Select Export Folder")
+
+        if not folder:
+            return
+
+        # =========================
+        # CREATE JOB FOLDER
+        # =========================
+        job_name = f"job_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+        job_path = os.path.join(folder, job_name)
+
+        os.makedirs(job_path, exist_ok=True)
+
+        # =========================
+        # COPY TIFF FILES
+        # =========================
+        src_tiff = "job_001/tiff"   # your slicer output folder
+
+        if not os.path.exists(src_tiff):
+            QMessageBox.warning(self, "Error", "TIFF folder not found. Run slicing first.")
+            return
+
+        dst_tiff = os.path.join(job_path, "tiff")
+
+        shutil.copytree(src_tiff, dst_tiff)
+
+        # =========================
+        # SAVE CONFIG
+        # =========================
+        config = {
+            "bed_x": self.bed_x.value(),
+            "bed_y": self.bed_y.value(),
+            "layer_height": self.layer_height.value() / 10.0,
+            "dpi": self.dpi.value()
+        }
+
+        with open(os.path.join(job_path, "config.json"), "w") as f:
+            json.dump(config, f, indent=4)
+
+        # =========================
+        # SAVE METADATA
+        # =========================
+        metadata = {
+            "files": self.files,
+            "layers": self.last_result["layers"],
+            "time_hr": self.last_result["time_hr"],
+            "cost": self.last_result["cost"]
+        }
+
+        with open(os.path.join(job_path, "metadata.json"), "w") as f:
+            json.dump(metadata, f, indent=4)
+
+        QMessageBox.information(self, "Export", "Job exported successfully")
 
     # =========================
     # GENERATE
@@ -281,6 +381,23 @@ class SlicerApp(QWidget):
         if self.dpi.value() < 100:
             QMessageBox.warning(self, "Warning", "DPI too low")
             return
+        
+        errors, warnings = self.validate_job()
+
+        if errors:
+            QMessageBox.critical(self, "Validation Error", "\n".join(errors))
+            return
+
+        if warnings:
+            reply = QMessageBox.warning(
+                self,
+                "Warning",
+                "\n".join(warnings) + "\n\nContinue?",
+                QMessageBox.Yes | QMessageBox.No
+            )
+
+            if reply == QMessageBox.No:
+                return
 
         if not self.files:
             self.output_label.setText("No files selected")
@@ -299,7 +416,12 @@ class SlicerApp(QWidget):
             "bed_x": self.bed_x.value(),
             "bed_y": self.bed_y.value(),
             "layer_height": self.layer_height.value() / 10.0,
-            "dpi": self.dpi.value()
+            "dpi": self.dpi.value(),
+
+            # NEW
+            "shell_thickness": self.shell_thickness.value(),
+            "core_density": self.core_density.value() / 100.0,
+            "gamma": self.gamma.value() / 10.0
         }
 
         self.worker = SlicerWorker(self.files, settings)
@@ -345,13 +467,16 @@ class SlicerApp(QWidget):
 
             self.preview_label.setPixmap(pixmap)
 
+            self.slider.blockSignals(True)
             self.slider.setMaximum(len(self.layer_images) - 1)
+            self.slider.blockSignals(False)
 
     # =========================
     # FINISHED
     # =========================
     def on_finished(self, result):
 
+        self.last_result = result
         self.progress.setValue(100)
 
         # re-enable buttons
@@ -384,6 +509,11 @@ class SlicerApp(QWidget):
 
     def on_slider_change(self, index):
 
+        if not self.layer_images:
+            return
+
+        index = max(0, min(index, len(self.layer_images) - 1))
+
         if index < 0 or index >= len(self.layer_images):
             return
 
@@ -410,6 +540,40 @@ class SlicerApp(QWidget):
         )
 
         self.preview_label.setPixmap(pixmap)
+
+
+    def validate_job(self):
+
+        errors = []
+        warnings = []
+
+        # =========================
+        # BED SIZE VALIDATION
+        # =========================
+        if self.bed_x.value() < 100 or self.bed_y.value() < 100:
+            errors.append("Bed size too small")
+
+        # =========================
+        # DPI VALIDATION
+        # =========================
+        dpi = self.dpi.value()
+
+        if dpi < 100:
+            errors.append("DPI too low (<100)")
+
+        if dpi > 1200:
+            warnings.append("DPI very high (slow processing)")
+
+        # =========================
+        # FILE CHECK
+        # =========================
+        if not self.files:
+            errors.append("No STL files selected")
+
+        # =========================
+        # RESULT
+        # =========================
+        return errors, warnings
 
 
 # =========================
