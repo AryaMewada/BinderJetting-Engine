@@ -56,6 +56,57 @@ class Part:
         self.size = self.max_bound - self.min_bound
 
 
+    def auto_fit(self, bed_size):
+
+        best_fit = None
+        best_area = float("inf")
+
+        for angle in [0, 90]:
+
+            test = self.mesh.copy()
+
+            # rotate
+            rot = trimesh.transformations.rotation_matrix(
+                np.radians(angle), [0, 0, 1]
+            )
+            test.apply_transform(rot)
+
+            bounds = test.bounds
+            size = bounds[1] - bounds[0]
+
+            if size[0] <= bed_size[0] and size[1] <= bed_size[1]:
+                area = size[0] * size[1]
+
+                if area < best_area:
+                    best_area = area
+                    best_fit = (angle, test, size)
+
+        # if fits → apply best rotation
+        if best_fit:
+            angle, mesh, size = best_fit
+            self.mesh = mesh
+            self.size = size
+            self.min_bound = mesh.bounds[0]
+            self.max_bound = mesh.bounds[1]
+            return
+
+        # ❌ DOES NOT FIT → SCALE DOWN
+        bounds = self.mesh.bounds
+        size = bounds[1] - bounds[0]
+
+        scale_x = bed_size[0] / size[0]
+        scale_y = bed_size[1] / size[1]
+
+        scale = min(scale_x, scale_y) * 0.95  # small margin
+
+        self.mesh.apply_scale(scale)
+
+        # recompute bounds
+        self.min_bound = self.mesh.bounds[0]
+        self.max_bound = self.mesh.bounds[1]
+        self.size = self.max_bound - self.min_bound
+
+
 
 # =========================================================
 # COLLISION CHECK (GLOBAL)
@@ -230,251 +281,214 @@ def fill_gaps(placed_parts, remaining_parts, bed_size, spacing=5):
 # =========================================================
 # CONFIG
 # =========================================================
-BED_SIZE_MM = (500, 500)
-DPI = 150
-LAYER_HEIGHT = 0.2
 
 MAX_DIST_MM = 0.4
 SHELL_THICKNESS_MM = 1.5
 CORE_BINDER_RATIO = 0.6
 GAMMA = 2.5
-
 PADDING_MM = 10   # distance from edge in mm
 
 
-JOB_DIR = "job_001"
-TIFF_DIR = os.path.join(JOB_DIR, "tiff")
+# JOB_DIR = "job_001"
+# TIFF_DIR = os.path.join(JOB_DIR, "tiff")
 
-os.makedirs(TIFF_DIR, exist_ok=True)
+# os.makedirs(TIFF_DIR, exist_ok=True)
 
-PIXEL_SIZE = 25.4 / DPI
-IMG_WIDTH = max(1, int(BED_SIZE_MM[0] / PIXEL_SIZE))
-IMG_HEIGHT = max(1, int(BED_SIZE_MM[1] / PIXEL_SIZE))
+# PIXEL_SIZE = 25.4 / DPI
+# IMG_WIDTH = max(1, int(BED_SIZE_MM[0] / PIXEL_SIZE))
+# IMG_HEIGHT = max(1, int(BED_SIZE_MM[1] / PIXEL_SIZE))
 
-PADDING_PX = int(PADDING_MM / PIXEL_SIZE)
+# PADDING_PX = int(PADDING_MM / PIXEL_SIZE)
+
+# MACHINE PARAMETERS
+# RECOAT_TIME_SEC = 8        # layer spreading
+# PRINT_TIME_PER_LAYER_SEC = 12   # head movement pass
 
 
 # =========================================================
 # LOAD PARTS
 # =========================================================
-file_list = [
-    "handle.stl",
-    "scraper.stl",
-    "pcb.stl",
-    "pcb2.stl",
-    "Head.stl",
-    "PCB CMPT 1.stl",
-    "Body1.stl",
-    "handle.stl",
-    "scraper.stl",
-    "pcb.stl",
-    "pcb2.stl",
-    "Head.stl",
-    "PCB CMPT 1.stl",
-    "Body1.stl",
-    "handle.stl",
-    "scraper.stl",
-    "pcb.stl",
-    "pcb2.stl",
-    "Head.stl",
-    "PCB CMPT 1.stl",
-    "Body1.stl",
-]
+def run_slicer(file_list, progress_callback=None, settings=None):
 
-parts = []
+        # =========================
+    # APPLY SETTINGS
+    # =========================
+    if settings is None:
+        settings = {}
 
-for f in file_list:
-    part = Part(f)
-    print(f"Loaded: {f}")
-    print("  Watertight:", part.mesh.is_watertight)
-    parts.append(part)
+    BED_SIZE_MM = (
+        settings.get("bed_x", 500),
+        settings.get("bed_y", 500)
+    )
 
-placed_parts, all_parts = auto_nest(parts, BED_SIZE_MM)
+    DPI = settings.get("dpi", 300)
+    LAYER_HEIGHT = settings.get("layer_height", 0.2)
 
-# remaining = parts not placed initially
-remaining_parts = [p for p in all_parts if p.filepath not in [pp.filepath for pp in placed_parts]]
+    PIXEL_SIZE = 25.4 / DPI
 
-parts = fill_gaps(placed_parts, remaining_parts, BED_SIZE_MM)
+    IMG_WIDTH = max(1, int(BED_SIZE_MM[0] / PIXEL_SIZE))
+    IMG_HEIGHT = max(1, int(BED_SIZE_MM[1] / PIXEL_SIZE))
+    PADDING_MM = 10   # distance from edge in mm
 
-# =========================================================
-# COMBINE MESHES
-# =========================================================
-combined_mesh = trimesh.util.concatenate([p.mesh for p in parts])
+    PADDING_PX = int(PADDING_MM / PIXEL_SIZE)
 
-print("FINAL BOUNDS:", combined_mesh.bounds)
-# =========================================================
-# REGION CROP (FIXED VERSION)
-# =========================================================
-min_x, min_y = combined_mesh.bounds[0][:2]
-max_x, max_y = combined_mesh.bounds[1][:2]
-
-# convert to pixel space
-min_px = int(min_x / PIXEL_SIZE)
-min_py = int(min_y / PIXEL_SIZE)
-max_px = int(max_x / PIXEL_SIZE)
-max_py = int(max_y / PIXEL_SIZE)
-
-# margin (important)
-margin = 150
-
-min_px = max(0, min_px - margin)
-min_py = max(0, min_py - margin)
-max_px = min(IMG_WIDTH, max_px + margin)
-max_py = min(IMG_HEIGHT, max_py + margin)
-
-CROP_WIDTH = max_px - min_px
-CROP_HEIGHT = max_py - min_py
-
-print("Crop size:", CROP_WIDTH, CROP_HEIGHT)
-
-# =========================================================
-# SLICING SETUP
-# =========================================================
-z_min, z_max = combined_mesh.bounds[:, 2]
-z = z_min + (LAYER_HEIGHT / 2)
-
-layer_num = 0
+    MAX_DIST_MM = 0.4
+    SHELL_THICKNESS_MM = 1.5
+    CORE_BINDER_RATIO = 0.6
+    GAMMA = 2.5
+   
 
 
+    JOB_DIR = "job_001"
+    TIFF_DIR = os.path.join(JOB_DIR, "tiff")
 
-# =========================================================
-# SLICING LOOP (FIXED STRUCTURE)
-# =========================================================
-total_black_pixels = 0
-while z <= z_max:
+    os.makedirs(TIFF_DIR, exist_ok=True)
 
-    print(f"Processing layer {layer_num} at Z={z:.3f}")
+    PADDING_PX = int(PADDING_MM / PIXEL_SIZE)
 
-    try:
-        section = combined_mesh.section(
-            plane_origin=[0, 0, z],
-            plane_normal=[0, 0, 1]
-        )
-    except Exception:
-        z += LAYER_HEIGHT
-        layer_num += 1
-        continue
+    # MACHINE PARAMETERS
+    RECOAT_TIME_SEC = 8        # layer spreading
+    PRINT_TIME_PER_LAYER_SEC = 12   # head movement pass
 
-    if section is None or len(section.entities) == 0:
-        z += LAYER_HEIGHT
-        layer_num += 1
-        continue
-
-    slice_2D, transform = section.to_2D()
-
-    # =====================================================
-    # CREATE MASK (IMPORTANT)
-    # =====================================================
-    mask = np.full((IMG_HEIGHT, IMG_WIDTH), 255, dtype=np.uint8)
 
     
 
-    # =====================================================
-    # DRAW GEOMETRY (FIXED)
-    # =====================================================
-    for path in slice_2D.discrete:
+    # =========================
+    # LOAD PARTS
+    # =========================
+    parts = []
+    
 
-        if len(path) < 3:
+    for f in file_list:
+        part = Part(f)
+        part.auto_fit(BED_SIZE_MM)
+        parts.append(part)
+
+    # 🔥 SORT BY SIZE (largest first)
+    parts.sort(key=lambda p: p.size[0] * p.size[1], reverse=True)
+
+    # =========================
+    # NESTING (RUN ONCE)
+    # =========================
+    placed_parts, all_parts = auto_nest(parts, BED_SIZE_MM)
+
+    remaining_parts = all_parts[len(placed_parts):]
+
+    parts = fill_gaps(placed_parts, remaining_parts, BED_SIZE_MM)
+
+    # =========================
+    # COMBINE MESH
+    # =========================
+    combined_mesh = trimesh.util.concatenate([p.mesh for p in parts])
+
+    print("FINAL BOUNDS:", combined_mesh.bounds)
+
+    # =========================
+    # SLICING SETUP
+    # =========================
+    z_min, z_max = combined_mesh.bounds[:, 2]
+    z = z_min + (LAYER_HEIGHT / 2)
+
+    layer_num = 0
+    total_black_pixels = 0
+
+    # =========================
+    # SLICING LOOP
+    # =========================
+    total_layers_est = int((z_max - z_min) / LAYER_HEIGHT) + 1
+    while z <= z_max:
+
+        print(f"Processing layer {layer_num} at Z={z:.3f}")
+
+        try:
+            section = combined_mesh.section(
+                plane_origin=[0, 0, z],
+                plane_normal=[0, 0, 1]
+            )
+        except Exception:
+            z += LAYER_HEIGHT
+            layer_num += 1
             continue
 
-        pts = []
+        if section is None or len(section.entities) == 0:
+            z += LAYER_HEIGHT
+            layer_num += 1
+            continue
 
-        for x, y in path:
+        slice_2D, transform = section.to_2D()
 
-            point_2d = np.array([x, y, 0, 1])
-            point_3d = transform @ point_2d
+        mask = np.full((IMG_HEIGHT, IMG_WIDTH), 255, dtype=np.uint8)
 
-            px = int(round(point_3d[0] / PIXEL_SIZE)) + PADDING_PX
-            py = int(round(point_3d[1] / PIXEL_SIZE)) + PADDING_PX
+        for path in slice_2D.discrete:
 
-            # flip Y AFTER padding
-            py = IMG_HEIGHT - 1 - py
+            if len(path) < 3:
+                continue
 
-            # clamp with padding safety
-            px = max(PADDING_PX, min(px, IMG_WIDTH - PADDING_PX - 1))
-            py = max(PADDING_PX, min(py, IMG_HEIGHT - PADDING_PX - 1))
+            pts = []
 
-            pts.append([px, py])
+            for x, y in path:
+                point_2d = np.array([x, y, 0, 1])
+                point_3d = transform @ point_2d
 
-        if len(pts) >= 3:
-            pts_np = np.array(pts, dtype=np.int32)
+                px = int(round(point_3d[0] / PIXEL_SIZE)) + PADDING_PX
+                py = int(round(point_3d[1] / PIXEL_SIZE)) + PADDING_PX
 
-            cv2.fillPoly(mask, [pts_np], 0)
-            cv2.polylines(mask, [pts_np], True, 0, 1)
+                py = IMG_HEIGHT - 1 - py
 
-    # =====================================================
-    # MORPHOLOGY (EDGE FIX)
-    # =====================================================
-    kernel = np.ones((2, 2), np.uint8)
-    mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel)
+                px = max(PADDING_PX, min(px, IMG_WIDTH - PADDING_PX - 1))
+                py = max(PADDING_PX, min(py, IMG_HEIGHT - PADDING_PX - 1))
 
-    # =====================================================
-    # DISTANCE FIELD
-    # =====================================================
-    binary = (mask == 0).astype(np.uint8)
-    dist = cv2.distanceTransform(binary, cv2.DIST_L2, 5)
+                pts.append([px, py])
 
-    MAX_DIST_PX = MAX_DIST_MM / PIXEL_SIZE
-    SHELL_PX = SHELL_THICKNESS_MM / PIXEL_SIZE
+            if len(pts) >= 3:
+                pts_np = np.array(pts, dtype=np.int32)
+                cv2.fillPoly(mask, [pts_np], 0)
 
-    grayscale = np.zeros_like(dist)
+        # ✅ CORRECT PLACE
+        total_black_pixels += np.sum(mask == 0)
 
-    shell_mask = dist <= SHELL_PX
-    grayscale[shell_mask] = 0
+        img = Image.fromarray(mask)
+        filename = os.path.join(TIFF_DIR, f"layer_{layer_num:04d}.tiff")
+        img.save(filename)
 
-    core_mask = dist > SHELL_PX
+        z += LAYER_HEIGHT
+        layer_num += 1
 
-    core_dist = dist[core_mask] - SHELL_PX
-    core_max = max(MAX_DIST_PX - SHELL_PX, 1e-6)
+        # =========================
+        # PROGRESS UPDATE
+        # =========================
+        if progress_callback:
+            progress = int((layer_num / total_layers_est) * 100)
+            progress_callback(progress)
 
-    core_norm = np.clip(core_dist / core_max, 0, 1)
+    print("TIFF generation complete")
 
-    core_values = (1 - (core_norm ** GAMMA)) * 255
-    core_values *= CORE_BINDER_RATIO
+    # =========================
+    # ESTIMATION
+    # =========================
+    total_layers = layer_num
 
-    grayscale[core_mask] = 255 - core_values
-    grayscale[mask == 255] = 255
+    time_per_layer = RECOAT_TIME_SEC + PRINT_TIME_PER_LAYER_SEC
+    total_time_hr = (total_layers * time_per_layer) / 3600
 
-    grayscale_img = grayscale.astype(np.uint8)
+    build_height = total_layers * LAYER_HEIGHT
+    build_volume_liters = (
+        BED_SIZE_MM[0] * BED_SIZE_MM[1] * build_height
+    ) / 1e6
 
-    img = Image.fromarray(grayscale_img)
+    pixel_volume_mm3 = PIXEL_SIZE * PIXEL_SIZE * LAYER_HEIGHT
+    binder_volume_ml = (total_black_pixels * pixel_volume_mm3) / 1000
 
-    filename = os.path.join(TIFF_DIR, f"layer_{layer_num:04d}.tiff")
-    img.save(filename, format="TIFF")
+    powder_cost = build_volume_liters * 50
+    binder_cost = (binder_volume_ml / 1000) * 1200
 
-    # IMPORTANT: increment INSIDE LOOP
-    z += LAYER_HEIGHT
-    layer_num += 1
+    total_cost = powder_cost + binder_cost
 
-print("TIFF generation complete")
-
-
-# =========================================================
-# GCODE
-# =========================================================
-GCODE_FILE = os.path.join(JOB_DIR, "motion.gcode")
-
-with open(GCODE_FILE, "w") as f:
-
-    f.write("G21\nG90\n\n")
-
-    for i in range(layer_num):
-        f.write(f"; Layer {i}\n")
-        f.write("G1 X500\nG1 X0\n")
-        f.write(f"G1 Z-{LAYER_HEIGHT}\n")
-        f.write(f"M_PRINT layer_{i:04d}.tiff\n\n")
-
-print("G-code generated")
-
-
-# =========================================================
-# CONFIG
-# =========================================================
-config = {
-    "layers": layer_num,
-    "dpi": DPI,
-    "bed": BED_SIZE_MM
-}
-
-with open(os.path.join(JOB_DIR, "config.json"), "w") as f:
-    json.dump(config, f, indent=4)
+    # =========================
+    # RETURN (VERY IMPORTANT)
+    # =========================
+    return {
+        "layers": total_layers,
+        "time_hr": total_time_hr,
+        "cost": total_cost
+    }
