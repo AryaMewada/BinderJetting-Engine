@@ -396,6 +396,7 @@ def run_slicer(file_list, progress_callback=None, settings=None):
     # SLICING LOOP
     # =========================
     total_layers_est = int((z_max - z_min) / LAYER_HEIGHT) + 1
+
     while z <= z_max:
 
         print(f"Processing layer {layer_num} at Z={z:.3f}")
@@ -444,22 +445,37 @@ def run_slicer(file_list, progress_callback=None, settings=None):
                 pts_np = np.array(pts, dtype=np.int32)
                 cv2.fillPoly(mask, [pts_np], 0)
 
-        # ✅ CORRECT PLACE
+        # =========================
+        # BINDER CALCULATION
+        # =========================
         total_black_pixels += np.sum(mask == 0)
 
+        # =========================
+        # SAVE IMAGE
+        # =========================
         img = Image.fromarray(mask)
         filename = os.path.join(TIFF_DIR, f"layer_{layer_num:04d}.tiff")
         img.save(filename)
 
-        z += LAYER_HEIGHT
-        layer_num += 1
-
         # =========================
-        # PROGRESS UPDATE
+        # PROGRESS + PREVIEW (FIXED)
         # =========================
         if progress_callback:
             progress = int((layer_num / total_layers_est) * 100)
-            progress_callback(progress)
+            progress_callback(progress, mask)
+
+        # =========================
+        # NEXT LAYER
+        # =========================
+        z += LAYER_HEIGHT
+        layer_num += 1
+
+
+    # =========================
+    # FINAL PROGRESS
+    # =========================
+    if progress_callback:
+        progress_callback(100, None)
 
     print("TIFF generation complete")
 
