@@ -481,7 +481,8 @@ def run_slicer(file_list, progress_callback=None, settings=None):
         # =========================
         # COUNT PIXELS
         # =========================
-        total_black_pixels += np.sum(output) / 255
+        binder_strength = (255 - output) / 255.0
+        total_black_pixels += np.sum(binder_strength)
 
         # =========================
         # SAVE IMAGE
@@ -525,12 +526,15 @@ def run_slicer(file_list, progress_callback=None, settings=None):
     build_volume_liters = (
         BED_SIZE_MM[0] * BED_SIZE_MM[1] * build_height
     ) / 1e6
+    solid_fraction = total_black_pixels / (IMG_WIDTH * IMG_HEIGHT * total_layers)
+
+    powder_volume_liters = build_volume_liters * (1 - solid_fraction)
 
     pixel_volume_mm3 = PIXEL_SIZE * PIXEL_SIZE * LAYER_HEIGHT
     binder_volume_ml = (total_black_pixels * pixel_volume_mm3) / 1000
 
-    powder_cost = build_volume_liters * 50
-    binder_cost = (binder_volume_ml / 1000) * 1200
+    powder_cost = powder_volume_liters * 50
+    binder_cost = binder_volume_ml * 1.2  # ₹ per ml
 
     total_cost = powder_cost + binder_cost
 
@@ -540,5 +544,7 @@ def run_slicer(file_list, progress_callback=None, settings=None):
     return {
         "layers": total_layers,
         "time_hr": total_time_hr,
-        "cost": total_cost
+        "cost": total_cost,
+        "binder_ml": binder_volume_ml,
+        "powder_l": powder_volume_liters
     }

@@ -55,7 +55,7 @@ class SlicerApp(QWidget):
         super().__init__()
         
 
-        self.setWindowTitle("Binder Jetting Slicer")
+        self.setWindowTitle("Binder Jetting Slicer Engine")
         self.setGeometry(200, 200, 450, 650)
 
         self.layout = QVBoxLayout()
@@ -488,6 +488,8 @@ class SlicerApp(QWidget):
             f"Done!\n"
             f"Layers: {result['layers']}\n"
             f"Time: {result['time_hr']:.2f} hr\n"
+            f"Binder: {result['binder_ml']:.2f} ml\n"
+            f"Powder: {result['powder_l']:.2f} L\n"
             f"Cost: ₹{result['cost']:.2f}"
         )
 
