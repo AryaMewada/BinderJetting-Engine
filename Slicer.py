@@ -387,142 +387,136 @@ def run_slicer(file_list, progress_callback=None, settings=None):
     # =========================
     # COMBINE MESH
     # =========================
-    combined_mesh = trimesh.util.concatenate([p.mesh for p in parts])
-
-    print("FINAL BOUNDS:", combined_mesh.bounds)
-
+    
     # =========================
     # SLICING SETUP
     # =========================
-    z_min, z_max = combined_mesh.bounds[:, 2]
+
+    # compute global Z bounds
+    z_min = min([p.mesh.bounds[0][2] for p in parts])
+    z_max = max([p.mesh.bounds[1][2] for p in parts])
+
     z = z_min + (LAYER_HEIGHT / 2)
 
     layer_num = 0
     total_black_pixels = 0
 
+    total_layers_est = int((z_max - z_min) / LAYER_HEIGHT) + 1
+
+
     # =========================
     # SLICING LOOP
     # =========================
-    total_layers_est = int((z_max - z_min) / LAYER_HEIGHT) + 1
-
     while z <= z_max:
 
         print(f"Processing layer {layer_num} at Z={z:.3f}")
 
-        try:
-            section = combined_mesh.section(
-                plane_origin=[0, 0, z],
-                plane_normal=[0, 0, 1]
-            )
-        except Exception:
-            z += LAYER_HEIGHT
-            layer_num += 1
-            continue
+        # final layer image (white background)
+        layer_mask = np.full((IMG_HEIGHT, IMG_WIDTH), 255, dtype=np.uint8)
 
-        if section is None or len(section.entities) == 0:
-            z += LAYER_HEIGHT
-            layer_num += 1
-            continue
+        # =========================
+        # PROCESS EACH PART
+        # =========================
+        for part in parts:
 
-        slice_2D, transform = section.to_2D()
-
-        mask = np.full((IMG_HEIGHT, IMG_WIDTH), 255, dtype=np.uint8)
-
-        for path in slice_2D.discrete:
-
-            if len(path) < 3:
+            try:
+                section = part.mesh.section(
+                    plane_origin=[0, 0, z],
+                    plane_normal=[0, 0, 1]
+                )
+            except:
                 continue
 
-            pts = []
+            if section is None:
+                continue
 
-            for x, y in path:
-                point_2d = np.array([x, y, 0, 1])
-                point_3d = transform @ point_2d
+            slice_2D, transform = section.to_2D()
 
-                px = int(round(point_3d[0] / PIXEL_SIZE)) + PADDING_PX
-                py = int(round(point_3d[1] / PIXEL_SIZE)) + PADDING_PX
+            mask = np.full((IMG_HEIGHT, IMG_WIDTH), 255, dtype=np.uint8)
 
-                py = IMG_HEIGHT - 1 - py
+            # =========================
+            # RASTERIZE SHAPE
+            # =========================
+            for path in slice_2D.discrete:
 
-                px = max(PADDING_PX, min(px, IMG_WIDTH - PADDING_PX - 1))
-                py = max(PADDING_PX, min(py, IMG_HEIGHT - PADDING_PX - 1))
+                if len(path) < 3:
+                    continue
 
-                pts.append([px, py])
+                pts = []
 
-            if len(pts) >= 3:
-                pts_np = np.array(pts, dtype=np.int32)
-                cv2.fillPoly(mask, [pts_np], 0)
+                for x, y in path:
+                    point_2d = np.array([x, y, 0, 1])
+                    point_3d = transform @ point_2d
+
+                    px = int(round(point_3d[0] / PIXEL_SIZE)) + PADDING_PX
+                    py = int(round(point_3d[1] / PIXEL_SIZE)) + PADDING_PX
+
+                    py = IMG_HEIGHT - 1 - py
+
+                    px = max(PADDING_PX, min(px, IMG_WIDTH - PADDING_PX - 1))
+                    py = max(PADDING_PX, min(py, IMG_HEIGHT - PADDING_PX - 1))
+
+                    pts.append([px, py])
+
+                if len(pts) >= 3:
+                    cv2.fillPoly(mask, [np.array(pts)], 0)
+
+            # =========================
+            # PER-PART SETTINGS
+            # =========================
+            name = os.path.basename(part.filepath)
+            p_settings = settings.get("part_settings", {}).get(name, {})
+
+            mode = p_settings.get("mode", "Solid")
+            density = p_settings.get("density", 50) / 100.0
+
+            binary = (mask == 0).astype(np.uint8)
+            dist = cv2.distanceTransform(binary, cv2.DIST_L2, 5)
+
+            shell_mask = (dist > 0) & (dist <= SHELL_PX)
+            core_mask = dist > SHELL_PX
+
+            part_output = np.full_like(mask, 255, dtype=np.uint8)
+
+            # shell = strong
+            part_output[shell_mask] = 0
+
+            if mode == "Solid":
+                part_output[core_mask] = int(255 * (1 - CORE_RATIO))
+
+            elif mode == "Hollow":
+                random_mask = np.random.rand(*mask.shape)
+                keep = random_mask < density
+
+                part_output[core_mask & keep] = int(255 * (1 - CORE_RATIO))
+                part_output[core_mask & (~keep)] = 255
+
+            # =========================
+            # MERGE PART INTO LAYER
+            # =========================
+            layer_mask = np.minimum(layer_mask, part_output)
 
         # =========================
-        # BINDER CALCULATION (NEW)
+        # BINDER CALCULATION
         # =========================
-
-        binary = (mask == 0).astype(np.uint8)
-
-        # IMPORTANT: distance expects 0 background, 1 object
-        dist = cv2.distanceTransform(binary, cv2.DIST_L2, 5)
-
-        # shell thickness directly in pixels
-        shell_mask = (dist > 0) & (dist <= SHELL_PX)
-        core_mask = dist > SHELL_PX
-
-        output = np.full_like(mask, 255, dtype=np.uint8)
-
-        # shell always solid
-        output[shell_mask] = 0
-
-        if PRINT_MODE == "Solid":
-            output[core_mask] = int(255 * (1 - CORE_RATIO))
-
-        elif PRINT_MODE == "Hollow":
-
-            # RANDOM PATTERN BASED ON DENSITY
-            random_mask = np.random.rand(*output.shape)
-
-            # keep some pixels, remove others
-            keep = random_mask < HOLLOW_DENSITY
-
-            # apply only inside core
-            hollow_pixels = core_mask & keep
-            empty_pixels = core_mask & (~keep)
-
-            # keep some binder
-            output[hollow_pixels] = int(255 * (1 - CORE_RATIO))
-
-            # remove rest (empty)
-            output[empty_pixels] = 255
-
-        # apply gamma
-
-        output = output.astype(np.uint8)
-
-        print("Shell:", np.sum(shell_mask))
-        print("Core:", np.sum(core_mask))
-
-        # =========================
-        # COUNT PIXELS
-        # =========================
-        binder_strength = (255 - output) / 255.0
+        binder_strength = (255 - layer_mask) / 255.0
         total_black_pixels += np.sum(binder_strength)
 
         # =========================
         # SAVE IMAGE
         # =========================
-        img = Image.fromarray(output)
+        img = Image.fromarray(layer_mask)
         filename = os.path.join(TIFF_DIR, f"layer_{layer_num:04d}.tiff")
         img.save(filename)
 
         # =========================
-        # PROGRESS + PREVIEW (FIXED)
+        # PROGRESS
         # =========================
         if progress_callback:
             progress = int((layer_num / total_layers_est) * 100)
-            preview = output
-            progress_callback(progress, preview)
+            progress_callback(progress, layer_mask)
 
-        # =========================
-        # NEXT LAYER
-        # =========================
+        # next layer
         z += LAYER_HEIGHT
         layer_num += 1
 
@@ -534,6 +528,9 @@ def run_slicer(file_list, progress_callback=None, settings=None):
         progress_callback(100, None)
 
     print("TIFF generation complete")
+
+
+
 
     # =========================
     # ESTIMATION

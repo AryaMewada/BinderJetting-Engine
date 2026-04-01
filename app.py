@@ -69,6 +69,7 @@ class SlicerApp(QWidget):
 
         self.file_list = QListWidget()
         self.layout.addWidget(self.file_list)
+        self.file_list.currentItemChanged.connect(self.on_part_selected)
 
         # buttons row
         btn_layout = QHBoxLayout()
@@ -171,6 +172,7 @@ class SlicerApp(QWidget):
         self.shell_thickness.setRange(1, 10)
         self.shell_thickness.setValue(2)
         self.shell_thickness.setFixedWidth(100)
+
         form.addRow("Shell Thickness (px)", self.shell_thickness)
 
         # Core Density
@@ -195,12 +197,17 @@ class SlicerApp(QWidget):
         self.print_mode = QComboBox()
         self.print_mode.addItems(["Solid", "Hollow"]) #issue this
         self.hollow_density = QSpinBox()
+        self.hollow_density.setVisible(False)
         self.hollow_density.setRange(10, 100)
         self.hollow_density.setValue(50)
-
+        self.print_mode.currentTextChanged.connect(self.toggle_density_visibility)
+        
+        self.print_mode.currentTextChanged.connect(self.save_part_settings)
+        self.hollow_density.valueChanged.connect(self.save_part_settings)
+        form.addRow("Print Mode", self.print_mode)
         form.addRow("Hollow Density (%)", self.hollow_density)
 
-        form.addRow("Print Mode", self.print_mode)
+       
 
         # =========================
         # WRAP IN GROUP BOX (CLEAN UI)
@@ -253,6 +260,50 @@ class SlicerApp(QWidget):
         self.setLayout(self.layout)
 
         self.files = []
+        self.part_settings = {}
+
+    def toggle_density_visibility(self, mode):
+        if mode == "Hollow":
+            self.hollow_density.setVisible(True)
+        else:
+            self.hollow_density.setVisible(False)
+
+    #---------
+    #On Part Selected
+    #---------
+    def on_part_selected(self, item):
+
+        if not item:
+            return
+
+        name = item.text()
+
+        settings = self.part_settings.get(name, {
+            "mode": "Solid",
+            "density": 50
+        })
+
+        self.print_mode.setCurrentText(settings["mode"])
+        self.hollow_density.setValue(settings["density"])
+
+        self.toggle_density_visibility(settings["mode"])
+
+
+    #---------
+    #On Save Part Setting
+    #---------
+    def save_part_settings(self):
+
+        item = self.file_list.currentItem()
+        if not item:
+            return
+
+        name = item.text()
+
+        self.part_settings[name] = {
+            "mode": self.print_mode.currentText(),
+            "density": self.hollow_density.value()
+        }
 
     # =========================
     # ADD FILES
@@ -499,7 +550,13 @@ class SlicerApp(QWidget):
             "name": name,
             "shell_thickness": self.shell_thickness.value(),
             "core_density": self.core_density.value(),
-            "gamma": self.gamma.value()
+            "gamma": self.gamma.value(),
+
+            "print_mode": self.print_mode.currentText(),
+            "hollow_density": self.hollow_density.value() / 100.0,
+
+            # ✅ NEW (IMPORTANT)
+            "part_settings": self.part_settings
         }
 
         path = f"profiles/jobs/{name}.json"
@@ -520,7 +577,9 @@ class SlicerApp(QWidget):
 
         files = os.listdir(folder)
 
-        item, ok = QInputDialog.getItem(self, "Load Job Profile", "Select:", files, 0, False)
+        item, ok = QInputDialog.getItem(
+            self, "Load Job Profile", "Select:", files, 0, False
+        )
 
         if not ok:
             return
@@ -528,10 +587,34 @@ class SlicerApp(QWidget):
         with open(os.path.join(folder, item)) as f:
             data = json.load(f)
 
-        self.shell_thickness.setValue(data["shell_thickness"])
-        self.core_density.setValue(data["core_density"])
-        self.gamma.setValue(data["gamma"])
+        # =========================
+        # LOAD GLOBAL SETTINGS
+        # =========================
+        self.shell_thickness.setValue(data.get("shell_thickness", 2))
+        self.core_density.setValue(data.get("core_density", 60))
+        self.gamma.setValue(data.get("gamma", 25))
 
+        self.print_mode.setCurrentText(data.get("print_mode", "Solid"))
+
+        self.hollow_density.setValue(
+            int(data.get("hollow_density", 0.5) * 100)
+        )
+
+        # =========================
+        # LOAD PER-PART SETTINGS
+        # =========================
+        self.part_settings = data.get("part_settings", {})
+
+        # =========================
+        # REFRESH UI FOR CURRENT PART
+        # =========================
+        current_item = self.file_list.currentItem()
+
+        if current_item:
+            self.on_part_selected(current_item)
+
+        # ensure correct visibility
+        self.toggle_density_visibility(self.print_mode.currentText())
     # =========================
     # GENERATE
     # =========================
@@ -590,7 +673,7 @@ class SlicerApp(QWidget):
             "core_density": self.core_density.value() / 100.0,
             "gamma": self.gamma.value() / 10.0,
             "print_mode": self.print_mode.currentText(),
-            
+            "part_settings": self.part_settings,
         }
 
         self.worker = SlicerWorker(self.files, settings)
