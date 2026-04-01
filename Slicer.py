@@ -328,11 +328,12 @@ def run_slicer(file_list, progress_callback=None, settings=None):
     # =========================
     # BINDER SETTINGS FROM UI
     # =========================
-    SHELL_PX = settings.get("shell_thickness", 2) * 3
+    SHELL_PX = settings.get("shell_thickness", 2)
     CORE_RATIO = settings.get("core_density", 0.6)
     GAMMA = settings.get("gamma", 2.5)
     PRINT_MODE = settings.get("print_mode", "Solid")
     HOLLOW_DENSITY = settings.get("hollow_density", 0.5)
+    INFILL_TYPE = settings.get("infill_type", "Random")
     
 
     PIXEL_SIZE = 25.4 / DPI
@@ -409,6 +410,8 @@ def run_slicer(file_list, progress_callback=None, settings=None):
     # =========================
     while z <= z_max:
 
+        
+
         print(f"Processing layer {layer_num} at Z={z:.3f}")
 
         # final layer image (white background)
@@ -465,7 +468,13 @@ def run_slicer(file_list, progress_callback=None, settings=None):
             # PER-PART SETTINGS
             # =========================
             name = os.path.basename(part.filepath)
-            p_settings = settings.get("part_settings", {}).get(name, {})
+            all_settings = settings.get("part_settings", {})
+
+            p_settings = {}
+            for key in all_settings:
+                if os.path.basename(key) == name:
+                    p_settings = all_settings[key]
+                    break
 
             mode = p_settings.get("mode", "Solid")
             density = p_settings.get("density", 50) / 100.0
@@ -482,14 +491,67 @@ def run_slicer(file_list, progress_callback=None, settings=None):
             part_output[shell_mask] = 0
 
             if mode == "Solid":
-                part_output[core_mask] = int(255 * (1 - CORE_RATIO))
+                # fully solid
+                part_output[core_mask] = 0
+
 
             elif mode == "Hollow":
-                random_mask = np.random.rand(*mask.shape)
-                keep = random_mask < density
 
-                part_output[core_mask & keep] = int(255 * (1 - CORE_RATIO))
-                part_output[core_mask & (~keep)] = 255
+                if INFILL_TYPE == "Random":
+
+                    random_mask = np.random.rand(*mask.shape)
+                    keep = random_mask < density
+
+                    part_output[core_mask & keep] = int(255 * (1 - CORE_RATIO))
+                    part_output[core_mask & (~keep)] = 255
+
+
+                elif INFILL_TYPE == "Grid":
+
+                    grid_size = int(settings.get("infill_size", 10) / PIXEL_SIZE)
+                    grid_size = max(2, grid_size)
+
+                    yy, xx = np.indices(mask.shape)
+
+                    grid_pattern = ((xx // grid_size) % 2) ^ ((yy // grid_size) % 2)
+
+                    keep = grid_pattern == 1
+
+                    if density < 1.0:
+                        step = int(1 / density)
+                        keep = keep & (((xx + yy) % step) == 0)
+
+                    # ✅ APPLY ONLY INSIDE CORE
+                    part_output[core_mask & keep] = 0
+                    part_output[core_mask & (~keep)] = 255
+
+                    #for Rotation of infill
+
+                    if layer_num % 2 == 0:
+                        grid_pattern = ((xx // grid_size) % 2) ^ ((yy // grid_size) % 2)
+                    else:
+                        grid_pattern = ((yy // grid_size) % 2) ^ ((xx // grid_size) % 2)
+
+                    #   
+
+                    grid_size = int(5 / PIXEL_SIZE)  # spacing in mm → pixels
+                    grid_size = max(2, grid_size)
+
+                    yy, xx = np.indices(mask.shape)
+
+                    grid_pattern = ((xx // grid_size) % 2) ^ ((yy // grid_size) % 2)
+
+                    keep = grid_pattern == 1
+
+                    # apply density (thin grid if low density)
+                    # deterministic spacing instead of random
+                    spacing_factor = max(1, int(1 / density))
+                    keep = keep & (((xx + yy) % spacing_factor) == 0)
+
+                    part_output[core_mask & keep] = int(255 * (1 - CORE_RATIO))
+                    part_output[core_mask & (~keep)] = 255
+                    
+                    print("PART:", name, "MODE:", mode)
 
             # =========================
             # MERGE PART INTO LAYER

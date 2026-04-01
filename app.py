@@ -201,11 +201,23 @@ class SlicerApp(QWidget):
         self.hollow_density.setRange(10, 100)
         self.hollow_density.setValue(50)
         self.print_mode.currentTextChanged.connect(self.toggle_density_visibility)
+
+        self.infill_type = QComboBox()
+        self.infill_type.addItems(["Random", "Grid"])
+
+        form.addRow("Infill Type", self.infill_type)
+
         
         self.print_mode.currentTextChanged.connect(self.save_part_settings)
         self.hollow_density.valueChanged.connect(self.save_part_settings)
         form.addRow("Print Mode", self.print_mode)
         form.addRow("Hollow Density (%)", self.hollow_density)
+
+        self.infill_size = QSpinBox()
+        self.infill_size.setRange(1, 50)
+        self.infill_size.setValue(10)
+
+        form.addRow("Infill Size (mm)", self.infill_size)
 
        
 
@@ -674,6 +686,9 @@ class SlicerApp(QWidget):
             "gamma": self.gamma.value() / 10.0,
             "print_mode": self.print_mode.currentText(),
             "part_settings": self.part_settings,
+
+            "infill_type": self.infill_type.currentText(),
+            "infill_size": self.infill_size.value(),
         }
 
         self.worker = SlicerWorker(self.files, settings)
