@@ -109,6 +109,7 @@ class Part:
 
 
 
+
 # =========================================================
 # COLLISION CHECK (GLOBAL)
 # =========================================================
@@ -330,6 +331,8 @@ def run_slicer(file_list, progress_callback=None, settings=None):
     SHELL_PX = settings.get("shell_thickness", 2) * 3
     CORE_RATIO = settings.get("core_density", 0.6)
     GAMMA = settings.get("gamma", 2.5)
+    PRINT_MODE = settings.get("print_mode", "Solid")
+    HOLLOW_DENSITY = settings.get("hollow_density", 0.5)
     
 
     PIXEL_SIZE = 25.4 / DPI
@@ -465,11 +468,29 @@ def run_slicer(file_list, progress_callback=None, settings=None):
 
         output = np.full_like(mask, 255, dtype=np.uint8)
 
-        # shell = full binder
+        # shell always solid
         output[shell_mask] = 0
 
-        # core = partial binder
-        output[core_mask] = int(255 * (1 - CORE_RATIO))
+        if PRINT_MODE == "Solid":
+            output[core_mask] = int(255 * (1 - CORE_RATIO))
+
+        elif PRINT_MODE == "Hollow":
+
+            # RANDOM PATTERN BASED ON DENSITY
+            random_mask = np.random.rand(*output.shape)
+
+            # keep some pixels, remove others
+            keep = random_mask < HOLLOW_DENSITY
+
+            # apply only inside core
+            hollow_pixels = core_mask & keep
+            empty_pixels = core_mask & (~keep)
+
+            # keep some binder
+            output[hollow_pixels] = int(255 * (1 - CORE_RATIO))
+
+            # remove rest (empty)
+            output[empty_pixels] = 255
 
         # apply gamma
 

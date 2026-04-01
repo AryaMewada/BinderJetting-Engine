@@ -11,12 +11,13 @@ from PyQt5.QtWidgets import (
     QApplication, QWidget, QPushButton, QVBoxLayout,
     QLabel, QFileDialog, QListWidget, QProgressBar,
     QMessageBox, QHBoxLayout, QSpinBox, QFormLayout
+    ,QInputDialog , QSlider , QGroupBox , QComboBox
 )
 
 from PyQt5.QtCore import QThread, pyqtSignal
-from PyQt5.QtWidgets import QSlider
-
 from PyQt5.QtCore import Qt
+from PyQt5.QtCore import Qt
+
 
 
 
@@ -92,41 +93,74 @@ class SlicerApp(QWidget):
         self.btn_export.clicked.connect(self.export_job)
         btn_layout.addWidget(self.btn_export)
 
+
+        self.layout.addLayout(btn_layout)
+        btn_layout = QHBoxLayout()
+
+        self.btn_save_printer = QPushButton("Save Printer Profile")
+        self.btn_save_printer.clicked.connect(self.save_printer_profile)
+        btn_layout.addWidget(self.btn_save_printer)
+
+        self.btn_load_printer = QPushButton("Load Printer Profile")
+        self.btn_load_printer.clicked.connect(self.load_printer_profile)
+        btn_layout.addWidget(self.btn_load_printer)
+
+        self.btn_save_job = QPushButton("Save Job Profile")
+        self.btn_save_job.clicked.connect(self.save_job_profile)
+        btn_layout.addWidget(self.btn_save_job)
+
+        self.btn_load_job = QPushButton("Load Job Profile")
+        self.btn_load_job.clicked.connect(self.load_job_profile)
+        btn_layout.addWidget(self.btn_load_job)
+
         self.layout.addLayout(btn_layout)
 
         # =========================
         # SETTINGS PANEL
         # =========================
+
         self.settings_label = QLabel("Settings")
         self.layout.addWidget(self.settings_label)
 
         form = QFormLayout()
 
+        # ALIGNMENT SETTINGS (IMPORTANT)
+        form.setLabelAlignment(Qt.AlignRight)
+        form.setFormAlignment(Qt.AlignLeft | Qt.AlignTop)
+        form.setHorizontalSpacing(20)
+        form.setVerticalSpacing(10)
+
+        # =========================
+        # MACHINE SETTINGS
+        # =========================
+
         # Bed X
         self.bed_x = QSpinBox()
         self.bed_x.setRange(50, 2000)
         self.bed_x.setValue(500)
+        self.bed_x.setFixedWidth(100)
         form.addRow("Bed X (mm)", self.bed_x)
 
         # Bed Y
         self.bed_y = QSpinBox()
         self.bed_y.setRange(50, 2000)
         self.bed_y.setValue(500)
+        self.bed_y.setFixedWidth(100)
         form.addRow("Bed Y (mm)", self.bed_y)
 
         # Layer Height
         self.layer_height = QSpinBox()
         self.layer_height.setRange(1, 50)
-        self.layer_height.setValue(2)  # = 0.2 mm
+        self.layer_height.setValue(2)
+        self.layer_height.setFixedWidth(100)
         form.addRow("Layer Height (x0.1 mm)", self.layer_height)
 
         # DPI
         self.dpi = QSpinBox()
         self.dpi.setRange(72, 1200)
         self.dpi.setValue(300)
+        self.dpi.setFixedWidth(100)
         form.addRow("DPI", self.dpi)
-
-        self.layout.addLayout(form)
 
         # =========================
         # BINDER SETTINGS
@@ -136,19 +170,47 @@ class SlicerApp(QWidget):
         self.shell_thickness = QSpinBox()
         self.shell_thickness.setRange(1, 10)
         self.shell_thickness.setValue(2)
+        self.shell_thickness.setFixedWidth(100)
         form.addRow("Shell Thickness (px)", self.shell_thickness)
 
         # Core Density
         self.core_density = QSpinBox()
         self.core_density.setRange(10, 100)
         self.core_density.setValue(60)
+        self.core_density.setFixedWidth(100)
         form.addRow("Core Density (%)", self.core_density)
 
         # Gamma
         self.gamma = QSpinBox()
         self.gamma.setRange(1, 50)
-        self.gamma.setValue(25)  # = 2.5
+        self.gamma.setValue(25)
+        self.gamma.setFixedWidth(100)
         form.addRow("Gamma (x0.1)", self.gamma)
+
+        # =========================
+        # PRINT MODE (NEW)
+        # =========================
+        
+
+        self.print_mode = QComboBox()
+        self.print_mode.addItems(["Solid", "Hollow"]) #issue this
+        self.hollow_density = QSpinBox()
+        self.hollow_density.setRange(10, 100)
+        self.hollow_density.setValue(50)
+
+        form.addRow("Hollow Density (%)", self.hollow_density)
+
+        form.addRow("Print Mode", self.print_mode)
+
+        # =========================
+        # WRAP IN GROUP BOX (CLEAN UI)
+        # =========================
+
+        settings_box = QGroupBox("")
+        settings_box.setLayout(form)
+
+        self.layout.addWidget(settings_box)
+        self.layout.setAlignment(settings_box, Qt.AlignLeft)
 
         # =========================
         # GENERATE
@@ -250,7 +312,8 @@ class SlicerApp(QWidget):
                 # NEW
                 "shell_thickness": self.shell_thickness.value(),
                 "core_density": self.core_density.value(),
-                "gamma": self.gamma.value()
+                "gamma": self.gamma.value(),
+                "hollow_density": self.hollow_density.value() / 100.0,
             }
         }
 
@@ -365,6 +428,110 @@ class SlicerApp(QWidget):
 
         QMessageBox.information(self, "Export", "Job exported successfully")
 
+
+
+    # =========================
+    # SAVE Printer Profile
+    # =========================
+    def save_printer_profile(self):
+
+        name, ok = QInputDialog.getText(self, "Printer Name", "Enter profile name:")
+
+        if not ok or not name:
+            return
+
+        os.makedirs("profiles/printers", exist_ok=True)
+
+        data = {
+            "name": name,
+            "bed_x": self.bed_x.value(),
+            "bed_y": self.bed_y.value(),
+            "dpi": self.dpi.value(),
+            "layer_height": self.layer_height.value()
+        }
+
+        path = f"profiles/printers/{name}.json"
+
+        with open(path, "w") as f:
+            json.dump(data, f, indent=4)
+
+        QMessageBox.information(self, "Saved", "Printer profile saved")
+
+    # =========================
+    # Load Printer Profile
+    # =========================
+
+    def load_printer_profile(self):
+
+        folder = "profiles/printers"
+        if not os.path.exists(folder):
+            return
+
+        files = os.listdir(folder)
+
+        item, ok = QInputDialog.getItem(self, "Load Printer", "Select:", files, 0, False)
+
+        if not ok:
+            return
+
+        with open(os.path.join(folder, item)) as f:
+            data = json.load(f)
+
+        self.bed_x.setValue(data["bed_x"])
+        self.bed_y.setValue(data["bed_y"])
+        self.dpi.setValue(data["dpi"])
+        self.layer_height.setValue(data["layer_height"])
+
+
+    # =========================
+    # Save Job Profile
+    # =========================
+    def save_job_profile(self):
+
+        name, ok = QInputDialog.getText(self, "Job Profile", "Enter name:")
+
+        if not ok or not name:
+            return
+
+        os.makedirs("profiles/jobs", exist_ok=True)
+
+        data = {
+            "name": name,
+            "shell_thickness": self.shell_thickness.value(),
+            "core_density": self.core_density.value(),
+            "gamma": self.gamma.value()
+        }
+
+        path = f"profiles/jobs/{name}.json"
+
+        with open(path, "w") as f:
+            json.dump(data, f, indent=4)
+
+        QMessageBox.information(self, "Saved", "Job profile saved")
+
+    # =========================
+    # Load Job Profile
+    # =========================
+    def load_job_profile(self):
+
+        folder = "profiles/jobs"
+        if not os.path.exists(folder):
+            return
+
+        files = os.listdir(folder)
+
+        item, ok = QInputDialog.getItem(self, "Load Job Profile", "Select:", files, 0, False)
+
+        if not ok:
+            return
+
+        with open(os.path.join(folder, item)) as f:
+            data = json.load(f)
+
+        self.shell_thickness.setValue(data["shell_thickness"])
+        self.core_density.setValue(data["core_density"])
+        self.gamma.setValue(data["gamma"])
+
     # =========================
     # GENERATE
     # =========================
@@ -421,7 +588,9 @@ class SlicerApp(QWidget):
             # NEW
             "shell_thickness": self.shell_thickness.value(),
             "core_density": self.core_density.value() / 100.0,
-            "gamma": self.gamma.value() / 10.0
+            "gamma": self.gamma.value() / 10.0,
+            "print_mode": self.print_mode.currentText(),
+            
         }
 
         self.worker = SlicerWorker(self.files, settings)
