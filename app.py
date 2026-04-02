@@ -175,6 +175,12 @@ class SlicerApp(QWidget):
 
         form.addRow("Shell Thickness (px)", self.shell_thickness)
 
+        self.shell_layers = QSpinBox()
+        self.shell_layers.setRange(1, 10)
+        self.shell_layers.setValue(2)
+
+        form.addRow("Shell Layers", self.shell_layers)
+
         # Core Density
         self.core_density = QSpinBox()
         self.core_density.setRange(10, 100)
@@ -682,6 +688,7 @@ class SlicerApp(QWidget):
 
             # NEW
             "shell_thickness": self.shell_thickness.value(),
+            "shell_layers": self.shell_layers.value(),
             "core_density": self.core_density.value() / 100.0,
             "gamma": self.gamma.value() / 10.0,
             "print_mode": self.print_mode.currentText(),

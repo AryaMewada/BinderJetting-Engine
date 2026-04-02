@@ -463,6 +463,7 @@ def run_slicer(file_list, progress_callback=None, settings=None):
 
                 if len(pts) >= 3:
                     cv2.fillPoly(mask, [np.array(pts)], 0)
+                    mask = cv2.GaussianBlur(mask, (3, 3), 0)
 
             # =========================
             # PER-PART SETTINGS
@@ -482,8 +483,10 @@ def run_slicer(file_list, progress_callback=None, settings=None):
             binary = (mask == 0).astype(np.uint8)
             dist = cv2.distanceTransform(binary, cv2.DIST_L2, 5)
 
-            shell_mask = (dist > 0) & (dist <= SHELL_PX)
-            core_mask = dist > SHELL_PX
+            shell_layers = settings.get("shell_layers", 2)
+
+            shell_mask = (dist > 0) & (dist <= SHELL_PX * shell_layers)
+            core_mask = dist > (SHELL_PX * shell_layers)
 
             part_output = np.full_like(mask, 255, dtype=np.uint8)
 
@@ -508,50 +511,38 @@ def run_slicer(file_list, progress_callback=None, settings=None):
 
                 elif INFILL_TYPE == "Grid":
 
+                    # =========================
+                    # GRID SIZE (mm → pixels)
+                    # =========================
                     grid_size = int(settings.get("infill_size", 10) / PIXEL_SIZE)
                     grid_size = max(2, grid_size)
 
                     yy, xx = np.indices(mask.shape)
 
-                    grid_pattern = ((xx // grid_size) % 2) ^ ((yy // grid_size) % 2)
-
-                    keep = grid_pattern == 1
-
-                    if density < 1.0:
-                        step = int(1 / density)
-                        keep = keep & (((xx + yy) % step) == 0)
-
-                    # ✅ APPLY ONLY INSIDE CORE
-                    part_output[core_mask & keep] = 0
-                    part_output[core_mask & (~keep)] = 255
-
-                    #for Rotation of infill
-
+                    # =========================
+                    # ROTATING GRID (CORRECT)
+                    # =========================
                     if layer_num % 2 == 0:
                         grid_pattern = ((xx // grid_size) % 2) ^ ((yy // grid_size) % 2)
                     else:
                         grid_pattern = ((yy // grid_size) % 2) ^ ((xx // grid_size) % 2)
 
-                    #   
-
-                    grid_size = int(5 / PIXEL_SIZE)  # spacing in mm → pixels
-                    grid_size = max(2, grid_size)
-
-                    yy, xx = np.indices(mask.shape)
-
-                    grid_pattern = ((xx // grid_size) % 2) ^ ((yy // grid_size) % 2)
-
                     keep = grid_pattern == 1
 
-                    # apply density (thin grid if low density)
-                    # deterministic spacing instead of random
-                    spacing_factor = max(1, int(1 / density))
-                    keep = keep & (((xx + yy) % spacing_factor) == 0)
+                    # =========================
+                    # DENSITY CONTROL (STABLE)
+                    # =========================
+                    if density < 1.0:
+                        step = max(1, int(1 / density))
+                        keep = keep & (((xx + yy) % step) == 0)
 
-                    part_output[core_mask & keep] = int(255 * (1 - CORE_RATIO))
-                    part_output[core_mask & (~keep)] = 255
-                    
-                    print("PART:", name, "MODE:", mode)
+                    # =========================
+                    # APPLY INFILL
+                    # =========================
+                    part_output[core_mask & keep] = 0
+
+                    # use grey instead of white → prevents "empty look"
+                    part_output[core_mask & (~keep)] = int(255 * (1 - CORE_RATIO))
 
             # =========================
             # MERGE PART INTO LAYER
