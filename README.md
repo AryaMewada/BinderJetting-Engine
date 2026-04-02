@@ -20,12 +20,12 @@ Completed -
 ✔ Hollow mode  
 ✔ Grid infill  
 ✔ Infill density control  
+✔ Advanced infill system with (random / grid base) 
+✔ A new Industrial Shapped UI and UX + bug patches
 
 Currently Working On -
 
-- Advanced infill system  
-  → multiple infill patterns (random / adaptive)  
-  → density-based structural control  
+- More Infill Types
 
 Upcoming -
 
@@ -47,3 +47,11 @@ Upcoming -
   → motion controller finalization  
   → printhead (binder) control system  
   → full system synchronization  
+
+
+
+
+
+  Key Points for future - 
+
+  When doing hollow, keep atleast 3 layers first layers solid then hollow and then again with top layers

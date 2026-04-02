@@ -1,0 +1,7 @@
+{
+    "name": "default ",
+    "bed_x": 500,
+    "bed_y": 500,
+    "dpi": 300,
+    "layer_height": 2
+}

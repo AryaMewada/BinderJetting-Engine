@@ -1,0 +1,14 @@
+{
+    "name": "Body 1",
+    "shell_thickness": 2,
+    "core_density": 20,
+    "gamma": 20,
+    "print_mode": "Hollow",
+    "hollow_density": 0.1,
+    "part_settings": {
+        "Body1.stl": {
+            "mode": "Hollow",
+            "density": 10
+        }
+    }
+}

@@ -54,264 +54,375 @@ class SlicerApp(QWidget):
 
     def __init__(self):
         super().__init__()
+
+        self.part_settings = {}
+
+        self.loading_part = False
         
 
         self.setWindowTitle("Binder Jetting Slicer Engine")
         self.setGeometry(200, 200, 450, 650)
 
-        self.layout = QVBoxLayout()
-
         # =========================
-        # FILE SECTION
+        # CREATE ALL WIDGETS FIRST
         # =========================
-        self.label = QLabel("Select STL Files")
-        self.layout.addWidget(self.label)
 
-        self.file_list = QListWidget()
-        self.layout.addWidget(self.file_list)
-        self.file_list.currentItemChanged.connect(self.on_part_selected)
-
-        # buttons row
-        btn_layout = QHBoxLayout()
-
+        # Buttons
         self.btn_add = QPushButton("Add STL")
-        self.btn_add.clicked.connect(self.add_files)
-        btn_layout.addWidget(self.btn_add)
-
         self.btn_new = QPushButton("New Project")
-        self.btn_new.clicked.connect(self.new_project)
-        btn_layout.addWidget(self.btn_new)
-
         self.btn_save = QPushButton("Save Project")
-        self.btn_save.clicked.connect(self.save_project)
-        btn_layout.addWidget(self.btn_save)
-
         self.btn_load = QPushButton("Load Project")
-        self.btn_load.clicked.connect(self.load_project)
-        btn_layout.addWidget(self.btn_load)
-
         self.btn_export = QPushButton("Export Job")
-        self.btn_export.clicked.connect(self.export_job)
-        btn_layout.addWidget(self.btn_export)
+        self.btn_save_printer = QPushButton("Save Printer")
+        self.btn_load_printer = QPushButton("Load Printer")
+        self.btn_save_job = QPushButton("Save Job")
+        self.btn_load_job = QPushButton("Load Job")
 
+        self.btn_generate = QPushButton("Generate")
 
-        self.layout.addLayout(btn_layout)
-        btn_layout = QHBoxLayout()
+        # File list
+        self.file_list = QListWidget()
 
-        self.btn_save_printer = QPushButton("Save Printer Profile")
-        self.btn_save_printer.clicked.connect(self.save_printer_profile)
-        btn_layout.addWidget(self.btn_save_printer)
+        # Progress + output
+        self.progress = QProgressBar()
+        self.output_label = QLabel("Output:")
 
-        self.btn_load_printer = QPushButton("Load Printer Profile")
-        self.btn_load_printer.clicked.connect(self.load_printer_profile)
-        btn_layout.addWidget(self.btn_load_printer)
-
-        self.btn_save_job = QPushButton("Save Job Profile")
-        self.btn_save_job.clicked.connect(self.save_job_profile)
-        btn_layout.addWidget(self.btn_save_job)
-
-        self.btn_load_job = QPushButton("Load Job Profile")
-        self.btn_load_job.clicked.connect(self.load_job_profile)
-        btn_layout.addWidget(self.btn_load_job)
-
-        self.layout.addLayout(btn_layout)
+        # Slider
+        self.slider = QSlider(Qt.Horizontal)
+        self.slider.valueChanged.connect(self.on_slider_change)
 
         # =========================
-        # SETTINGS PANEL
+        # SETTINGS FORM
         # =========================
-
-        self.settings_label = QLabel("Settings")
-        self.layout.addWidget(self.settings_label)
-
         form = QFormLayout()
 
-        # ALIGNMENT SETTINGS (IMPORTANT)
-        form.setLabelAlignment(Qt.AlignRight)
-        form.setFormAlignment(Qt.AlignLeft | Qt.AlignTop)
-        form.setHorizontalSpacing(20)
-        form.setVerticalSpacing(10)
-
-        # =========================
-        # MACHINE SETTINGS
-        # =========================
-
-        # Bed X
         self.bed_x = QSpinBox()
-        self.bed_x.setRange(50, 2000)
         self.bed_x.setValue(500)
-        self.bed_x.setFixedWidth(100)
-        form.addRow("Bed X (mm)", self.bed_x)
 
-        # Bed Y
         self.bed_y = QSpinBox()
-        self.bed_y.setRange(50, 2000)
         self.bed_y.setValue(500)
-        self.bed_y.setFixedWidth(100)
-        form.addRow("Bed Y (mm)", self.bed_y)
 
-        # Layer Height
         self.layer_height = QSpinBox()
-        self.layer_height.setRange(1, 50)
         self.layer_height.setValue(2)
-        self.layer_height.setFixedWidth(100)
-        form.addRow("Layer Height (x0.1 mm)", self.layer_height)
 
-        # DPI
         self.dpi = QSpinBox()
-        self.dpi.setRange(72, 1200)
         self.dpi.setValue(300)
-        self.dpi.setFixedWidth(100)
-        form.addRow("DPI", self.dpi)
 
-        # =========================
-        # BINDER SETTINGS
-        # =========================
-
-        # Shell Thickness
         self.shell_thickness = QSpinBox()
-        self.shell_thickness.setRange(1, 10)
         self.shell_thickness.setValue(2)
-        self.shell_thickness.setFixedWidth(100)
-
-        form.addRow("Shell Thickness (px)", self.shell_thickness)
 
         self.shell_layers = QSpinBox()
-        self.shell_layers.setRange(1, 10)
         self.shell_layers.setValue(2)
 
-        form.addRow("Shell Layers", self.shell_layers)
-
-        # Core Density
         self.core_density = QSpinBox()
-        self.core_density.setRange(10, 100)
         self.core_density.setValue(60)
-        self.core_density.setFixedWidth(100)
-        form.addRow("Core Density (%)", self.core_density)
 
-        # Gamma
         self.gamma = QSpinBox()
-        self.gamma.setRange(1, 50)
         self.gamma.setValue(25)
-        self.gamma.setFixedWidth(100)
-        form.addRow("Gamma (x0.1)", self.gamma)
-
-        # =========================
-        # PRINT MODE (NEW)
-        # =========================
-        
-
-        self.print_mode = QComboBox()
-        self.print_mode.addItems(["Solid", "Hollow"]) #issue this
-        self.hollow_density = QSpinBox()
-        self.hollow_density.setVisible(False)
-        self.hollow_density.setRange(10, 100)
-        self.hollow_density.setValue(50)
-        self.print_mode.currentTextChanged.connect(self.toggle_density_visibility)
 
         self.infill_type = QComboBox()
-        self.infill_type.addItems(["Random", "Grid"])
+        self.infill_type.addItems(["Grid", "Random"])
 
-        form.addRow("Infill Type", self.infill_type)
+        self.print_mode = QComboBox()
+        self.print_mode.addItems(["Solid", "Hollow"])
+        self.print_mode.currentTextChanged.connect(self.toggle_density_visibility)
 
-        
-        self.print_mode.currentTextChanged.connect(self.save_part_settings)
-        self.hollow_density.valueChanged.connect(self.save_part_settings)
-        form.addRow("Print Mode", self.print_mode)
-        form.addRow("Hollow Density (%)", self.hollow_density)
+        self.hollow_density = QSpinBox()
+        self.hollow_density.setValue(50)
 
         self.infill_size = QSpinBox()
-        self.infill_size.setRange(1, 50)
         self.infill_size.setValue(10)
 
-        form.addRow("Infill Size (mm)", self.infill_size)
+        # Bed
+        self.bed_x.setRange(50, 2000)
+        self.bed_y.setRange(50, 2000)
+
+        # Layer height (x0.1 mm)
+        self.layer_height.setRange(1, 50)
+
+        # DPI
+        self.dpi.setRange(72, 1200)
+
+        # Shell
+        self.shell_thickness.setRange(1, 20)
+        self.shell_layers.setRange(1, 10)
+
+        # Core density
+        self.core_density.setRange(1, 100)
+
+        # Gamma
+        self.gamma.setRange(1, 50)
+
+        # Hollow density
+        self.hollow_density.setRange(1, 100)
+
+        # Infill size
+        self.infill_size.setRange(1, 50)
+
+        # ADD TO FORM
+        form.addRow("Bed X", self.bed_x)
+        form.addRow("Bed Y", self.bed_y)
+        form.addRow("Layer Height", self.layer_height)
+        form.addRow("DPI", self.dpi)
+        form.addRow("Shell Thickness", self.shell_thickness)
+        form.addRow("Shell Layers", self.shell_layers)
+        form.addRow("Core Density", self.core_density)
+        form.addRow("Gamma", self.gamma)
+        form.addRow("Print Mode", self.print_mode)
+        form.addRow("Infill Type", self.infill_type)
+        form.addRow("Hollow Density", self.hollow_density)
+        form.addRow("Infill Size", self.infill_size)
+
+        self.btn_add.clicked.connect(self.add_files)
+        self.btn_new.clicked.connect(self.new_project)
+        self.btn_save.clicked.connect(self.save_project)
+        self.btn_load.clicked.connect(self.load_project)
+        self.btn_export.clicked.connect(self.export_job)
+        self.btn_generate.clicked.connect(self.generate)
+        self.btn_save_printer.clicked.connect(self.save_printer_profile)
+        self.btn_load_printer.clicked.connect(self.load_printer_profile)
+        self.btn_save_job.clicked.connect(self.save_job_profile)
+        self.btn_load_job.clicked.connect(self.load_job_profile)
+
+        self.file_list.currentItemChanged.connect(self.on_part_changed)
+
+        self.print_mode.currentTextChanged.connect(self.save_part_settings)
+        self.hollow_density.valueChanged.connect(self.save_part_settings)
+        self.shell_thickness.valueChanged.connect(self.save_part_settings)
+        self.shell_layers.valueChanged.connect(self.save_part_settings)
+        self.core_density.valueChanged.connect(self.save_part_settings)
+        self.gamma.valueChanged.connect(self.save_part_settings)
+        self.infill_type.currentTextChanged.connect(self.save_part_settings)
+        self.infill_size.valueChanged.connect(self.save_part_settings)
 
        
 
         # =========================
-        # WRAP IN GROUP BOX (CLEAN UI)
+        # MAIN LAYOUT STRUCTURE
         # =========================
 
-        settings_box = QGroupBox("")
-        settings_box.setLayout(form)
+        main_layout = QVBoxLayout()
+        title = QLabel("Addon Binder Jetting Engine")
+        title.setAlignment(Qt.AlignCenter)
+        title.setStyleSheet("""
+            font-size: 24px;
+            font-weight: bold;
+            color: white;
+        """)
 
-        self.layout.addWidget(settings_box)
-        self.layout.setAlignment(settings_box, Qt.AlignLeft)
-
-        # =========================
-        # GENERATE
-        # =========================
-        self.btn_generate = QPushButton("Generate")
-        self.btn_generate.clicked.connect(self.generate)
-        self.layout.addWidget(self.btn_generate)
-
-        # progress
-        self.progress = QProgressBar()
-        self.progress.setValue(0)
-        self.layout.addWidget(self.progress)
+        main_layout.addWidget(title)
 
         # =========================
-        # LIVE PREVIEW
+        # TOP TOOLBAR
         # =========================
+        toolbar = QHBoxLayout()
+
+        toolbar.addWidget(self.btn_add)
+        toolbar.addWidget(self.btn_new)
+        toolbar.addWidget(self.btn_save)
+        toolbar.addWidget(self.btn_load)
+        toolbar.addWidget(self.btn_export)
+        toolbar.addWidget(self.btn_save_printer)
+        toolbar.addWidget(self.btn_load_printer)
+        toolbar.addWidget(self.btn_save_job)
+        toolbar.addWidget(self.btn_load_job)
+
+        main_layout.addLayout(toolbar)
+
+        toolbar.setSpacing(10)
+        toolbar.setContentsMargins(5, 5, 5, 5)
+
+        # =========================
+        # CENTER (PREVIEW + PANEL)
+        # =========================
+        content_layout = QHBoxLayout()
+
+        # -------- LEFT (PREVIEW) --------
+        left_layout = QVBoxLayout()
+
         self.preview_label = QLabel()
-        self.preview_label.setMinimumHeight(300)
-        self.preview_label.setStyleSheet("background-color: black;")
-        self.layout.addWidget(self.preview_label)
+        self.overlay_label = QLabel(self.preview_label)
+        self.overlay_label.setStyleSheet("""
+            background-color: rgba(0, 0, 0, 150);
+            color: white;
+            padding: 8px;
+            border-radius: 5px;
+        """)
+        self.overlay_label.move(10, 10)
+        self.overlay_label.hide()
+        self.preview_label.setMinimumSize(800, 600)
+        self.preview_label.setStyleSheet("""
+            background-color: #0d1117;
+            border: 1px solid #30363d;
+        """)
+
+        left_layout.addWidget(self.preview_label)
+        left_layout.addWidget(self.slider)
+
+        content_layout.addLayout(left_layout, 3)
+
+        # -------- RIGHT PANEL --------
+        right_layout = QVBoxLayout()
+
+        # File list
+        right_layout.addWidget(QLabel("Select STL Files"))
+        right_layout.addWidget(self.file_list)
+
+        # Settings
+        # =========================
+        # STATIC SETTINGS
+        # =========================
+        static_box = QGroupBox("Static Settings")
+        static_form = QFormLayout()
+
+        static_form.addRow("Bed X", self.bed_x)
+        static_form.addRow("Bed Y", self.bed_y)
+        static_form.addRow("Layer Height", self.layer_height)
+        static_form.addRow("DPI", self.dpi)
+
+        static_box.setLayout(static_form)
 
         # =========================
-        # SLIDER
+        # DYNAMIC SETTINGS
         # =========================
-        self.slider = QSlider(Qt.Horizontal)
-        self.slider.setMinimum(0)
-        self.slider.setMaximum(0)
-        self.slider.valueChanged.connect(self.on_slider_change)
+        dynamic_box = QGroupBox("Dynamic Settings")
+        dynamic_form = QFormLayout()
 
-        self.layout.addWidget(self.slider)
+        dynamic_form.addRow("Shell Thickness", self.shell_thickness)
+        dynamic_form.addRow("Shell Layers", self.shell_layers)
+        dynamic_form.addRow("Core Density", self.core_density)
+        dynamic_form.addRow("Gamma", self.gamma)
 
-        self.layer_images = []
-        
-        
+        dynamic_form.addRow("Print Mode", self.print_mode)
+        dynamic_form.addRow("Infill Type", self.infill_type)
+        dynamic_form.addRow("Hollow Density", self.hollow_density)
+        dynamic_form.addRow("Infill Size", self.infill_size)
 
-        # output
-        self.output_label = QLabel("Output:")
-        self.layout.addWidget(self.output_label)
+        dynamic_box.setLayout(dynamic_form)
 
-        self.setLayout(self.layout)
+        # ADD TO UI
+        right_layout.addWidget(static_box)
+        right_layout.addWidget(dynamic_box)
+
+        # Generate button
+        self.btn_generate.setMinimumHeight(60)
+        right_layout.addWidget(self.btn_generate)
+        self.btn_generate.setStyleSheet("""
+            QPushButton {
+                background-color: #1f6feb;
+                color: white;
+                font-size: 18px;
+                border-radius: 10px;
+                padding: 10px;
+            }
+            QPushButton:hover {
+                background-color: #388bfd;
+            }
+        """)
+
+        right_widget = QWidget()
+        right_widget.setLayout(right_layout)
+        right_widget.setFixedWidth(300)
+
+        content_layout.addWidget(right_widget)
+
+        main_layout.addLayout(content_layout)
+
+        # =========================
+        # BOTTOM (SLIDER + STATUS)
+        # =========================
+        bottom_layout = QVBoxLayout()
+
+        bottom_layout.addWidget(self.progress)
+
+        bottom_layout.addWidget(self.output_label)
+        self.slider.setStyleSheet("""
+            QSlider::groove:horizontal {
+                height: 6px;
+                background: #30363d;
+                border-radius: 3px;
+            }
+            QSlider::handle:horizontal {
+                background: #1f6feb;
+                width: 14px;
+                margin: -5px 0;
+                border-radius: 7px;
+            }
+        """)
+
+        main_layout.addLayout(bottom_layout)
+
+        self.setLayout(main_layout)
 
         self.files = []
-        self.part_settings = {}
+    
+        self.toggle_density_visibility(self.print_mode.currentText())
 
     def toggle_density_visibility(self, mode):
-        if mode == "Hollow":
-            self.hollow_density.setVisible(True)
-        else:
-            self.hollow_density.setVisible(False)
+
+        is_hollow = (mode == "Hollow")
+
+        # Hollow density
+        self.hollow_density.setVisible(is_hollow)
+
+        # Infill controls
+        self.infill_type.setEnabled(is_hollow)
+        self.infill_size.setEnabled(is_hollow)
 
     #---------
     #On Part Selected
     #---------
-    def on_part_selected(self, item):
+    def on_part_changed(self, current, previous):
 
-        if not item:
+        # ✅ SAVE PREVIOUS PART
+        if previous:
+            name = previous.text()
+            self.part_settings[name] = {
+                "mode": self.print_mode.currentText(),
+                "density": self.hollow_density.value(),
+
+                "shell_thickness": self.shell_thickness.value(),
+                "shell_layers": self.shell_layers.value(),
+                "core_density": self.core_density.value(),
+                "gamma": self.gamma.value(),
+
+                "infill": self.infill_type.currentText(),
+                "infill_size": self.infill_size.value()
+            }
+
+        if not current:
             return
 
-        name = item.text()
+        name = current.text()
 
-        settings = self.part_settings.get(name, {
-            "mode": "Solid",
-            "density": 50
-        })
+        # 🚨 BLOCK SIGNALS
+        self.loading_part = True
 
-        self.print_mode.setCurrentText(settings["mode"])
-        self.hollow_density.setValue(settings["density"])
+        data = self.part_settings.get(name, {})
 
-        self.toggle_density_visibility(settings["mode"])
+        self.print_mode.setCurrentText(data.get("mode", "Solid"))
+        self.hollow_density.setValue(data.get("density", 50))
 
+        self.shell_thickness.setValue(data.get("shell_thickness", 2))
+        self.shell_layers.setValue(data.get("shell_layers", 2))
+        self.core_density.setValue(data.get("core_density", 60))
+        self.gamma.setValue(data.get("gamma", 25))
+
+        self.infill_type.setCurrentText(data.get("infill", "Grid"))
+        self.infill_size.setValue(data.get("infill_size", 10))
+
+        self.toggle_density_visibility(data.get("mode", "Solid"))
+
+        self.loading_part = False
 
     #---------
     #On Save Part Setting
     #---------
     def save_part_settings(self):
 
+        if self.loading_part:
+            return
+    
         item = self.file_list.currentItem()
         if not item:
             return
@@ -320,7 +431,15 @@ class SlicerApp(QWidget):
 
         self.part_settings[name] = {
             "mode": self.print_mode.currentText(),
-            "density": self.hollow_density.value()
+            "density": self.hollow_density.value(),
+
+            "shell_thickness": self.shell_thickness.value(),
+            "shell_layers": self.shell_layers.value(),
+            "core_density": self.core_density.value(),
+            "gamma": self.gamma.value(),
+
+            "infill": self.infill_type.currentText(),
+            "infill_size": self.infill_size.value()
         }
 
     # =========================
@@ -633,6 +752,7 @@ class SlicerApp(QWidget):
 
         # ensure correct visibility
         self.toggle_density_visibility(self.print_mode.currentText())
+        
     # =========================
     # GENERATE
     # =========================
@@ -736,9 +856,9 @@ class SlicerApp(QWidget):
             pixmap = pixmap.scaled(
                 self.preview_label.width(),
                 self.preview_label.height(),
-                aspectRatioMode=1
+                aspectRatioMode=Qt.KeepAspectRatio
             )
-
+            self.preview_label.setAlignment(Qt.AlignCenter)  # ✅ ADD THIS
             self.preview_label.setPixmap(pixmap)
 
             self.slider.blockSignals(True)
@@ -758,14 +878,26 @@ class SlicerApp(QWidget):
         self.btn_add.setEnabled(True)
         self.btn_new.setEnabled(True)
 
-        self.output_label.setText(
-            f"Done!\n"
+        # self.output_label.setText(
+        #     f"Done!\n"
+        #     f"Layers: {result['layers']}\n"
+        #     f"Time: {result['time_hr']:.2f} hr\n"
+        #     f"Binder: {result['binder_ml']:.2f} ml\n"
+        #     f"Powder: {result['powder_l']:.2f} L\n"
+        #     f"Cost: ₹{result['cost']:.2f}"
+        # )
+
+        overlay_text = (
             f"Layers: {result['layers']}\n"
             f"Time: {result['time_hr']:.2f} hr\n"
             f"Binder: {result['binder_ml']:.2f} ml\n"
             f"Powder: {result['powder_l']:.2f} L\n"
             f"Cost: ₹{result['cost']:.2f}"
         )
+
+        self.overlay_label.setText(overlay_text)
+        self.overlay_label.adjustSize()
+        self.overlay_label.show()
 
     # =========================
     # ERROR HANDLING
@@ -812,9 +944,10 @@ class SlicerApp(QWidget):
         pixmap = pixmap.scaled(
             self.preview_label.width(),
             self.preview_label.height(),
-            aspectRatioMode=1
+            aspectRatioMode=Qt.KeepAspectRatio
         )
 
+        self.preview_label.setAlignment(Qt.AlignCenter)  # ✅ ADD THIS
         self.preview_label.setPixmap(pixmap)
 
 
